@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <h1>ОТДЕЛ КАДРОВ</h1>
+            <p>Лабораторная работа №8 — CRUD приложение с Express</p>
+            <div class="badges">
+                <span class="variant-badge">Вариант 20 | Отдел кадров</span>
+                <span class="lab-badge">№8</span>
+            </div>
+        </header>
+        
+        <nav class="app-nav">
+            <a href="/" data-page="list" class="nav-link active">Список сотрудников</a>
+            <a href="/add" data-page="add" class="nav-link">Добавить сотрудника</a>
+        </nav>
+        
+        <main id="app-content" class="app-content"></main>
+        
+        <footer class="app-footer">
+            <p>Лабораторная работа №8 - CRUD приложение с Express и REST API</p>
+            <p>Лабораторная работа №9 - Чат-поддержка с Socket.IO</p>
+            <p>Студент: Синяков Глеб Максимович | Группа: 12 | Дата: 27.04.2026</p>
+        </footer>
+    </div>
+    
+    <div id="chat-widget-container">
+        <button id="chat-toggle-btn" class="chat-widget-button hidden" onclick="toggleChatWidget()">
+            💬
+        </button>
+
+        <div id="chat-widget" class="chat-widget">
+            <div class="chat-widget-header">
+                <h3>💬 Чат поддержки</h3>
+                <button class="close-widget-btn" onclick="closeChatWidget()">✕</button>
+            </div>
+            <div class="chat-widget-body">
+                <div id="widget-login-screen" class="login-screen">
+                    <div class="login-card">
+                        <h1>👋 Добро пожаловать!</h1>
+                        <p>Выберите вашу роль</p>
+                        <div class="role-buttons">
+                            <button class="role-btn operator" onclick="showWidgetRoleForm('operator')">
+                                <span class="icon">👨‍💼</span>
+                                Оператор
+                            </button>
+                            <button class="role-btn user" onclick="showWidgetRoleForm('user')">
+                                <span class="icon">👤</span>
+                                Пользователь
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="widget-user-form" class="login-form hidden">
+                    <div class="login-card">
+                        <h2>Вход в чат поддержки</h2>
+                        <input type="text" id="widget-user-name" placeholder="Введите ваше имя" class="input-field">
+                        <button onclick="joinWidgetAsUser()" class="btn-primary">Создать запрос</button>
+                        <button onclick="backWidgetToLogin()" class="btn-secondary">Назад</button>
+                    </div>
+                </div>
+
+                <div id="widget-operator-form" class="login-form hidden">
+                    <div class="login-card">
+                        <h2>Вход для оператора</h2>
+                        <input type="text" id="widget-operator-name" placeholder="Введите ваше имя" class="input-field">
+                        <input type="password" id="widget-operator-code" placeholder="Код оператора" class="input-field">
+                        <button onclick="joinWidgetAsOperator()" class="btn-primary">Войти</button>
+                        <button onclick="backWidgetToLogin()" class="btn-secondary">Назад</button>
+                    </div>
+                </div>
+
+                <div id="widget-chat-interface" class="chat-interface hidden">
+                    <div class="chat-container">
+                        <!-- Боковая панель оператора -->
+                        <div id="widget-operator-sidebar" class="operator-sidebar hidden">
+                            <div class="sidebar-header">
+                                <h3>Активные запросы</h3>
+                                <span class="operator-name" id="widget-operator-name-display"></span>
+                            </div>
+                            <div id="widget-tickets-list" class="tickets-list">
+                                <div class="empty-tickets">Нет активных запросов</div>
+                            </div>
+                        </div>
+                        
+                        <div class="chat-main">
+                            <div class="chat-header">
+                                <div class="chat-info">
+                                    <span id="widget-chat-title">Поддержка</span>
+                                    <span id="widget-chat-status" class="status-badge"></span>
+                                </div>
+                                <div class="chat-actions">
+                                    <button id="widget-close-ticket-btn" class="close-ticket-btn hidden">Завершить</button>
+                                    <button id="widget-logout-btn" class="logout-btn">Выйти</button>
+                                </div>
+                            </div>
+                            
+                            <div id="widget-messages-area" class="messages-area">
+                                <div class="welcome-message">
+                                    <p>👋 Добро пожаловать в чат поддержки!</p>
+                                    <p class="small">Выберите роль для начала общения</p>
+                                </div>
+                            </div>
+                            
+                            <div class="typing-indicator" id="widget-typing-indicator" style="display: none;">
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                                <span id="widget-typing-text">Пользователь печатает...</span>
+                            </div>
+                            
+                            <div class="message-input-area">
+                                <input type="text" id="widget-message-input" placeholder="Введите сообщение..." class="message-input" disabled>
+                                <button id="widget-send-btn" class="send-btn" disabled>📤</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/app.js"></script>
+    <script src="/js/chat-widget.js"></script>
+</body>
+</html>

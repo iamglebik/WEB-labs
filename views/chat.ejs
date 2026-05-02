@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><%= title %> - Чат-поддержка</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Главный экран входа -->
+        <div id="login-screen" class="login-screen">
+            <div class="login-card">
+                <h1>Чат-поддержка</h1>
+                <p>Выберите роль для входа</p>
+                
+                <div class="role-buttons">
+                    <button onclick="showRoleForm('operator')" class="role-btn operator">
+                        <span class="icon">👨‍💼</span>
+                        Оператор
+                    </button>
+                    <button onclick="showRoleForm('user')" class="role-btn user">
+                        <span class="icon">👤</span>
+                        Пользователь
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Форма входа для пользователя -->
+        <div id="user-form" class="login-form hidden">
+            <div class="login-card">
+                <h2>Вход в чат поддержки</h2>
+                <input type="text" id="user-name" placeholder="Введите ваше имя" class="input-field">
+                <button onclick="joinAsUser()" class="btn-primary">Создать запрос</button>
+                <button onclick="backToLogin()" class="btn-secondary">Назад</button>
+            </div>
+        </div>
+        
+        <!-- Форма входа для оператора -->
+        <div id="operator-form" class="login-form hidden">
+            <div class="login-card">
+                <h2>Вход для оператора</h2>
+                <input type="text" id="operator-name" placeholder="Введите ваше имя" class="input-field">
+                <input type="password" id="operator-code" placeholder="Код оператора" class="input-field">
+                <button onclick="joinAsOperator()" class="btn-primary">Войти</button>
+                <button onclick="backToLogin()" class="btn-secondary">Назад</button>
+            </div>
+        </div>
+        
+        <!-- Интерфейс чата -->
+        <div id="chat-interface" class="chat-interface hidden">
+            <div class="chat-container">
+                <!-- Боковая панель для оператора -->
+                <div id="operator-sidebar" class="operator-sidebar hidden">
+                    <div class="sidebar-header">
+                        <h3>Активные запросы</h3>
+                        <span class="operator-name" id="operator-name-display"></span>
+                    </div>
+                    <div id="tickets-list" class="tickets-list">
+                        <div class="empty-tickets">Нет активных запросов</div>
+                    </div>
+                </div>
+                
+                <!-- Основная область чата -->
+                <div class="chat-main">
+                    <div class="chat-header">
+                        <div class="chat-info">
+                            <span id="chat-title">Поддержка</span>
+                            <span id="chat-status" class="status-badge"></span>
+                        </div>
+                        <div class="chat-actions">
+                            <button id="close-ticket-btn" class="close-ticket-btn hidden">Завершить</button>
+                            <button id="logout-btn" class="logout-btn">Выйти</button>
+                        </div>
+                    </div>
+                    
+                    <div id="messages-area" class="messages-area">
+                        <div class="welcome-message">
+                            <p>👋 Добро пожаловать в чат поддержки!</p>
+                            <p class="small">Выберите роль для начала общения</p>
+                        </div>
+                    </div>
+                    
+                    <div class="typing-indicator" id="typing-indicator" style="display: none;">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                        <span id="typing-text">Пользователь печатает...</span>
+                    </div>
+                    
+                    <div class="message-input-area">
+                        <input type="text" id="message-input" placeholder="Введите сообщение..." class="message-input" disabled>
+                        <button id="send-btn" class="send-btn" disabled>📤</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/client.js"></script>
+</body>
+</html>
