@@ -84,6 +84,17 @@ function updateOperatorsTicketList() {
 io.on('connection', (socket) => {
     console.log('Клиент чата подключен:', socket.id);
 
+    socket.on('request_tickets', () => {
+        const waitingTickets = Array.from(tickets.values())
+            .filter(t => t.status === 'waiting')
+            .map(t => ({
+                id: t.id,
+                userName: t.userName,
+                createdAt: t.createdAt
+            }));
+        socket.emit('tickets_list', waitingTickets);
+    });
+
     socket.on('register', (data) => {
         const { name, role } = data;
         const userId = generateUserId();
@@ -116,17 +127,11 @@ io.on('connection', (socket) => {
                 role: 'user'
             });
 
-            socket.join(`ticket_${newTicket.id}`);
-
-            io.emit('ticket_created', {
-                ticketId: newTicket.id,
-                userName: name,
-                createdAt: newTicket.createdAt
-            });
+            socket.join('ticket_' + newTicket.id);
 
             const systemMessage = {
                 id: uuidv4(),
-                text: `Запрос #${newTicket.id.slice(0, 8)} создан. Ожидайте ответа оператора.`,
+                text: 'Запрос #' + newTicket.id.slice(0, 8) + ' создан. Ожидайте ответа оператора.',
                 sender: 'Система',
                 senderId: 'system',
                 senderRole: 'system',
@@ -134,6 +139,8 @@ io.on('connection', (socket) => {
             };
             newTicket.messages.push(systemMessage);
             socket.emit('new_message', systemMessage);
+
+            updateOperatorsTicketList();
         }
         else if (role === 'operator') {
             socket.emit('registered', {
@@ -166,11 +173,11 @@ io.on('connection', (socket) => {
         ticket.operatorId = operator.id;
         operator.currentTicket = ticketId;
 
-        socket.join(`ticket_${ticketId}`);
+        socket.join('ticket_' + ticketId);
 
         const userSocket = findSocketByUserId(ticket.userId);
         if (userSocket) {
-            userSocket.join(`ticket_${ticketId}`);
+            userSocket.join('ticket_' + ticketId);
             userSocket.emit('operator_joined', {
                 message: 'Оператор подключился к диалогу',
                 operatorName: operator.name
@@ -179,16 +186,16 @@ io.on('connection', (socket) => {
 
         const systemMessage = {
             id: uuidv4(),
-            text: `Оператор ${operator.name} присоединился к чату`,
+            text: 'Оператор ' + operator.name + ' присоединился к чату',
             sender: 'Система',
             senderId: 'system',
             senderRole: 'system',
             timestamp: new Date()
         };
         ticket.messages.push(systemMessage);
-        io.to(`ticket_${ticketId}`).emit('new_message', systemMessage);
+        io.to('ticket_' + ticketId).emit('new_message', systemMessage);
 
-        io.to(`ticket_${ticketId}`).emit('ticket_status', {
+        io.to('ticket_' + ticketId).emit('ticket_status', {
             status: 'active',
             operatorName: operator.name
         });
@@ -218,12 +225,12 @@ io.on('connection', (socket) => {
         };
 
         ticket.messages.push(messageData);
-        io.to(`ticket_${ticketId}`).emit('new_message', messageData);
+        io.to('ticket_' + ticketId).emit('new_message', messageData);
     });
 
     socket.on('typing', (data) => {
         const { ticketId, isTyping, userName } = data;
-        socket.to(`ticket_${ticketId}`).emit('user_typing', {
+        socket.to('ticket_' + ticketId).emit('user_typing', {
             userName: userName,
             isTyping: isTyping
         });
@@ -248,21 +255,21 @@ io.on('connection', (socket) => {
                 timestamp: new Date()
             };
             ticket.messages.push(systemMessage);
-            io.to(`ticket_${ticketId}`).emit('new_message', systemMessage);
-            io.to(`ticket_${ticketId}`).emit('ticket_closed', {
+            io.to('ticket_' + ticketId).emit('new_message', systemMessage);
+            io.to('ticket_' + ticketId).emit('ticket_closed', {
                 message: 'Запрос закрыт. Спасибо за обращение!'
             });
 
             const userSocket = findSocketByUserId(ticket.userId);
             if (userSocket) {
-                userSocket.leave(`ticket_${ticketId}`);
+                userSocket.leave('ticket_' + ticketId);
                 const userData = activeUsers.get(userSocket.id);
                 if (userData) userData.currentTicket = null;
             }
 
             const operatorSocket = findSocketByUserId(ticket.operatorId);
             if (operatorSocket) {
-                operatorSocket.leave(`ticket_${ticketId}`);
+                operatorSocket.leave('ticket_' + ticketId);
                 const operatorData = activeUsers.get(operatorSocket.id);
                 if (operatorData) operatorData.currentTicket = null;
             }
@@ -275,7 +282,7 @@ io.on('connection', (socket) => {
         if (user.role === 'operator') {
             user.currentTicket = null;
             updateOperatorsTicketList();
-        } else {
+        } else if (user.role === 'user') {
             socket.emit('support_ended');
         }
     });
@@ -297,27 +304,34 @@ io.on('connection', (socket) => {
         const user = activeUsers.get(socket.id);
 
         if (user) {
-            if (user.role === 'user' && user.currentTicket) {
-                const ticket = tickets.get(user.currentTicket);
-                if (ticket && ticket.status === 'waiting') {
-                    tickets.delete(user.currentTicket);
-                    updateOperatorsTicketList();
-                }
-            }
-
             if (user.currentTicket) {
                 const ticket = tickets.get(user.currentTicket);
-                if (ticket && ticket.status === 'active') {
-                    const disconnectMessage = {
-                        id: uuidv4(),
-                        text: `${user.name} отключился`,
-                        sender: 'Система',
-                        senderId: 'system',
-                        senderRole: 'system',
-                        timestamp: new Date()
-                    };
-                    ticket.messages.push(disconnectMessage);
-                    socket.to(`ticket_${user.currentTicket}`).emit('new_message', disconnectMessage);
+                if (ticket) {
+                    if (user.role === 'operator' && ticket.status === 'active') {
+                        const disconnectMessage = {
+                            id: uuidv4(),
+                            text: 'Оператор ' + user.name + ' отключился',
+                            sender: 'Система',
+                            senderId: 'system',
+                            senderRole: 'system',
+                            timestamp: new Date()
+                        };
+                        ticket.messages.push(disconnectMessage);
+                        socket.to('ticket_' + user.currentTicket).emit('new_message', disconnectMessage);
+                        
+                        ticket.status = 'waiting';
+                        ticket.operatorId = null;
+                        socket.to('ticket_' + user.currentTicket).emit('ticket_status', {
+                            status: 'waiting'
+                        });
+                        
+                        updateOperatorsTicketList();
+                    }
+                    
+                    if (user.role === 'user' && ticket.status === 'waiting') {
+                        tickets.delete(user.currentTicket);
+                        updateOperatorsTicketList();
+                    }
                 }
             }
 
@@ -327,10 +341,10 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, () => {
-    console.log(`========================================`);
-    console.log(`Сервер запущен на http://localhost:${PORT}`);
-    console.log(`ЛР8 - Отдел кадров: http://localhost:${PORT}/`);
-    console.log(`ЛР9 - Чат-поддержка: http://localhost:${PORT}/chat`);
-    console.log(`Код оператора: 1234`);
-    console.log(`========================================`);
+    console.log('========================================');
+    console.log('Сервер запущен на http://localhost:' + PORT);
+    console.log('ЛР8 - Отдел кадров: http://localhost:' + PORT + '/');
+    console.log('ЛР9 - Чат-поддержка: http://localhost:' + PORT + '/chat');
+    console.log('Код оператора: 1234');
+    console.log('========================================');
 });
