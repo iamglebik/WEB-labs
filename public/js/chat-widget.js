@@ -1,4 +1,3 @@
-// chat-widget.js - Виджет чата поддержки
 let widgetSocket = null;
 let widgetUser = null;
 let widgetTicket = null;
@@ -37,7 +36,14 @@ function connectWidgetToServer() {
     if (widgetSocket) {
         widgetSocket.disconnect();
     }
-    widgetSocket = io();
+    widgetSocket = io({
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionAttempts: 10,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        timeout: 20000
+    });
     setupWidgetSocketListeners();
 }
 
