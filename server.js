@@ -4,6 +4,7 @@ const socketIo = require('socket.io');
 const path = require('path');
 const bodyParser = require('body-parser');
 const { v4: uuidv4 } = require('uuid');
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
@@ -41,24 +42,27 @@ app.get('/chat', (req, res) => {
     res.render('chat', { title: 'Чат-поддержка' });
 });
 
-const chatStore = require('./routes/chat-store');
-let store = chatStore.readStore();
 let tickets = new Map();
 let activeUsers = new Map();
 
-if (store.tickets) {
-    Object.keys(store.tickets).forEach(key => {
-        tickets.set(key, store.tickets[key]);
-    });
+const STORE_FILE = path.join(__dirname, 'tickets-store.json');
+
+function saveTickets() {
+    const obj = {};
+    tickets.forEach((v, k) => { obj[k] = v; });
+    try { fs.writeFileSync(STORE_FILE, JSON.stringify(obj)); } catch(e) {}
 }
 
-function saveStore() {
-    const ticketsObj = {};
-    tickets.forEach((value, key) => {
-        ticketsObj[key] = value;
-    });
-    chatStore.writeStore({ tickets: ticketsObj });
+function loadTickets() {
+    try {
+        if (fs.existsSync(STORE_FILE)) {
+            const data = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
+            Object.keys(data).forEach(k => tickets.set(k, data[k]));
+        }
+    } catch(e) {}
 }
+
+loadTickets();
 
 function generateUserId() {
     return 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
@@ -74,286 +78,158 @@ function findSocketByUserId(userId) {
     return null;
 }
 
-function updateOperatorsTicketList() {
-    const waitingTickets = [];
+function sendTicketsToOperators() {
+    const waiting = [];
     tickets.forEach(t => {
-        if (t.status === 'waiting') {
-            waitingTickets.push({
-                id: t.id,
-                userName: t.userName,
-                createdAt: t.createdAt
-            });
-        }
+        if (t.status === 'waiting') waiting.push({ id: t.id, userName: t.userName, createdAt: t.createdAt });
     });
-
     activeUsers.forEach(user => {
         if (user.role === 'operator') {
-            const socket = io.sockets.sockets.get(user.socketId);
-            if (socket) {
-                socket.emit('tickets_list', waitingTickets);
-            }
+            const s = io.sockets.sockets.get(user.socketId);
+            if (s) s.emit('tickets_list', waiting);
         }
     });
 }
 
 io.on('connection', (socket) => {
-    console.log('Клиент чата подключен:', socket.id);
+    console.log('Connected:', socket.id);
 
     socket.on('request_tickets', () => {
-        const waitingTickets = [];
+        const waiting = [];
         tickets.forEach(t => {
-            if (t.status === 'waiting') {
-                waitingTickets.push({
-                    id: t.id,
-                    userName: t.userName,
-                    createdAt: t.createdAt
-                });
-            }
+            if (t.status === 'waiting') waiting.push({ id: t.id, userName: t.userName, createdAt: t.createdAt });
         });
-        socket.emit('tickets_list', waitingTickets);
+        socket.emit('tickets_list', waiting);
     });
 
     socket.on('register', (data) => {
         const { name, role } = data;
         const userId = generateUserId();
-        const userData = {
-            id: userId,
-            name: name,
-            role: role,
-            socketId: socket.id,
-            currentTicket: null
-        };
-
-        activeUsers.set(socket.id, userData);
+        activeUsers.set(socket.id, { id: userId, name, role, socketId: socket.id, currentTicket: null });
 
         if (role === 'user') {
-            const newTicket = {
+            const ticket = {
                 id: uuidv4(),
-                userId: userId,
+                userId,
                 userName: name,
                 status: 'waiting',
                 messages: [],
                 createdAt: new Date().toISOString(),
                 operatorId: null
             };
-            tickets.set(newTicket.id, newTicket);
-            userData.currentTicket = newTicket.id;
+            tickets.set(ticket.id, ticket);
+            activeUsers.get(socket.id).currentTicket = ticket.id;
 
-            socket.emit('registered', {
-                userId: userId,
-                ticketId: newTicket.id,
-                role: 'user'
-            });
+            socket.emit('registered', { userId, ticketId: ticket.id, role: 'user' });
+            socket.join('ticket_' + ticket.id);
 
-            socket.join('ticket_' + newTicket.id);
-
-            const systemMessage = {
-                id: uuidv4(),
-                text: 'Запрос #' + newTicket.id.slice(0, 8) + ' создан. Ожидайте ответа оператора.',
-                sender: 'Система',
-                senderId: 'system',
-                senderRole: 'system',
-                timestamp: new Date().toISOString()
-            };
-            newTicket.messages.push(systemMessage);
-            socket.emit('new_message', systemMessage);
-
-            saveStore();
-            updateOperatorsTicketList();
-        }
-        else if (role === 'operator') {
-            socket.emit('registered', {
-                userId: userId,
-                role: 'operator'
-            });
-
-            const waitingTickets = [];
+            const msg = { id: uuidv4(), text: 'Запрос создан. Ожидайте оператора.', sender: 'Система', senderId: 'system', senderRole: 'system', timestamp: new Date().toISOString() };
+            ticket.messages.push(msg);
+            socket.emit('new_message', msg);
+            saveTickets();
+            sendTicketsToOperators();
+        } else {
+            socket.emit('registered', { userId, role: 'operator' });
+            const waiting = [];
             tickets.forEach(t => {
-                if (t.status === 'waiting') {
-                    waitingTickets.push({
-                        id: t.id,
-                        userName: t.userName,
-                        createdAt: t.createdAt
-                    });
-                }
+                if (t.status === 'waiting') waiting.push({ id: t.id, userName: t.userName, createdAt: t.createdAt });
             });
-
-            socket.emit('tickets_list', waitingTickets);
+            socket.emit('tickets_list', waiting);
         }
     });
 
     socket.on('take_ticket', (data) => {
-        const { ticketId } = data;
-        const operator = activeUsers.get(socket.id);
-
-        if (!operator || operator.role !== 'operator') return;
-
-        const ticket = tickets.get(ticketId);
+        const op = activeUsers.get(socket.id);
+        if (!op || op.role !== 'operator') return;
+        const ticket = tickets.get(data.ticketId);
         if (!ticket || ticket.status !== 'waiting') return;
 
         ticket.status = 'active';
-        ticket.operatorId = operator.id;
-        operator.currentTicket = ticketId;
+        ticket.operatorId = op.id;
+        op.currentTicket = data.ticketId;
+        socket.join('ticket_' + data.ticketId);
 
-        socket.join('ticket_' + ticketId);
-
-        const userSocket = findSocketByUserId(ticket.userId);
-        if (userSocket) {
-            userSocket.join('ticket_' + ticketId);
-            userSocket.emit('operator_joined', {
-                message: 'Оператор подключился к диалогу',
-                operatorName: operator.name
-            });
+        const us = findSocketByUserId(ticket.userId);
+        if (us) {
+            us.join('ticket_' + data.ticketId);
+            us.emit('operator_joined', { operatorName: op.name });
         }
 
-        const systemMessage = {
-            id: uuidv4(),
-            text: 'Оператор ' + operator.name + ' присоединился к чату',
-            sender: 'Система',
-            senderId: 'system',
-            senderRole: 'system',
-            timestamp: new Date().toISOString()
-        };
-        ticket.messages.push(systemMessage);
-        io.to('ticket_' + ticketId).emit('new_message', systemMessage);
-
-        io.to('ticket_' + ticketId).emit('ticket_status', {
-            status: 'active',
-            operatorName: operator.name
-        });
-
-        saveStore();
-        updateOperatorsTicketList();
+        const msg = { id: uuidv4(), text: 'Оператор ' + op.name + ' присоединился', sender: 'Система', senderId: 'system', senderRole: 'system', timestamp: new Date().toISOString() };
+        ticket.messages.push(msg);
+        io.to('ticket_' + data.ticketId).emit('new_message', msg);
+        io.to('ticket_' + data.ticketId).emit('ticket_status', { status: 'active', operatorName: op.name });
+        saveTickets();
+        sendTicketsToOperators();
     });
 
     socket.on('send_message', (data) => {
-        const { ticketId, message } = data;
         const user = activeUsers.get(socket.id);
-
         if (!user) return;
-
-        const ticket = tickets.get(ticketId);
+        const ticket = tickets.get(data.ticketId);
         if (!ticket || ticket.status === 'closed') return;
-
         if (user.role === 'user' && ticket.status !== 'active') return;
         if (user.role === 'operator' && ticket.operatorId !== user.id) return;
 
-        const messageData = {
-            id: uuidv4(),
-            text: message,
-            sender: user.name,
-            senderId: user.id,
-            senderRole: user.role,
-            timestamp: new Date().toISOString()
-        };
-
-        ticket.messages.push(messageData);
-        io.to('ticket_' + ticketId).emit('new_message', messageData);
-        saveStore();
+        const msg = { id: uuidv4(), text: data.message, sender: user.name, senderId: user.id, senderRole: user.role, timestamp: new Date().toISOString() };
+        ticket.messages.push(msg);
+        io.to('ticket_' + data.ticketId).emit('new_message', msg);
+        saveTickets();
     });
 
     socket.on('typing', (data) => {
-        const { ticketId, isTyping, userName } = data;
-        socket.to('ticket_' + ticketId).emit('user_typing', {
-            userName: userName,
-            isTyping: isTyping
-        });
+        socket.to('ticket_' + data.ticketId).emit('user_typing', { userName: data.userName, isTyping: data.isTyping });
     });
 
     socket.on('close_ticket', (data) => {
-        const { ticketId } = data;
         const user = activeUsers.get(socket.id);
-
         if (!user) return;
+        const ticket = tickets.get(data.ticketId);
+        if (!ticket) return;
+        ticket.status = 'closed';
+        const msg = { id: uuidv4(), text: 'Запрос закрыт.', sender: 'Система', senderId: 'system', senderRole: 'system', timestamp: new Date().toISOString() };
+        ticket.messages.push(msg);
+        io.to('ticket_' + data.ticketId).emit('new_message', msg);
+        io.to('ticket_' + data.ticketId).emit('ticket_closed', {});
 
-        const ticket = tickets.get(ticketId);
-        if (ticket) {
-            ticket.status = 'closed';
+        const us = findSocketByUserId(ticket.userId);
+        if (us) { us.leave('ticket_' + data.ticketId); if (activeUsers.has(us.id)) activeUsers.get(us.id).currentTicket = null; }
+        const os = findSocketByUserId(ticket.operatorId);
+        if (os) { os.leave('ticket_' + data.ticketId); if (activeUsers.has(os.id)) activeUsers.get(os.id).currentTicket = null; }
 
-            const systemMessage = {
-                id: uuidv4(),
-                text: 'Запрос закрыт. Спасибо за обращение!',
-                sender: 'Система',
-                senderId: 'system',
-                senderRole: 'system',
-                timestamp: new Date().toISOString()
-            };
-            ticket.messages.push(systemMessage);
-            io.to('ticket_' + ticketId).emit('new_message', systemMessage);
-            io.to('ticket_' + ticketId).emit('ticket_closed', {
-                message: 'Запрос закрыт. Спасибо за обращение!'
-            });
-
-            const userSocket = findSocketByUserId(ticket.userId);
-            if (userSocket) {
-                userSocket.leave('ticket_' + ticketId);
-                const userData = activeUsers.get(userSocket.id);
-                if (userData) userData.currentTicket = null;
-            }
-
-            const operatorSocket = findSocketByUserId(ticket.operatorId);
-            if (operatorSocket) {
-                operatorSocket.leave('ticket_' + ticketId);
-                const operatorData = activeUsers.get(operatorSocket.id);
-                if (operatorData) operatorData.currentTicket = null;
-            }
-
-            setTimeout(() => {
-                tickets.delete(ticketId);
-                saveStore();
-            }, 60000);
-        }
-
-        if (user.role === 'operator') {
-            user.currentTicket = null;
-            updateOperatorsTicketList();
-        } else if (user.role === 'user') {
-            socket.emit('support_ended');
-        }
+        if (user.role === 'user') socket.emit('support_ended');
+        if (user.role === 'operator') { user.currentTicket = null; sendTicketsToOperators(); }
+        saveTickets();
     });
 
     socket.on('get_history', (data) => {
-        const { ticketId } = data;
-        const ticket = tickets.get(ticketId);
-
-        if (ticket) {
-            socket.emit('message_history', {
-                messages: ticket.messages,
-                status: ticket.status
-            });
-        }
+        const ticket = tickets.get(data.ticketId);
+        if (ticket) socket.emit('message_history', { messages: ticket.messages, status: ticket.status });
     });
 
     socket.on('disconnect', () => {
-        console.log('Клиент отключен:', socket.id);
         const user = activeUsers.get(socket.id);
-
         if (user) {
-            activeUsers.delete(socket.id);
-            
-            setTimeout(() => {
-                const stillConnected = findSocketByUserId(user.id);
-                if (!stillConnected) {
-                    if (user.currentTicket) {
-                        const ticket = tickets.get(user.currentTicket);
-                        if (ticket) {
-                            if (user.role === 'operator' && ticket.status === 'active') {
-                                ticket.status = 'waiting';
-                                ticket.operatorId = null;
-                                updateOperatorsTicketList();
-                                saveStore();
-                            }
-                        }
-                    }
+            if (user.role === 'operator' && user.currentTicket) {
+                const ticket = tickets.get(user.currentTicket);
+                if (ticket && ticket.status === 'active') {
+                    ticket.status = 'waiting';
+                    ticket.operatorId = null;
+                    const msg = { id: uuidv4(), text: 'Оператор отключился. Ожидайте нового оператора.', sender: 'Система', senderId: 'system', senderRole: 'system', timestamp: new Date().toISOString() };
+                    ticket.messages.push(msg);
+                    socket.to('ticket_' + user.currentTicket).emit('new_message', msg);
+                    socket.to('ticket_' + user.currentTicket).emit('ticket_status', { status: 'waiting' });
+                    saveTickets();
                 }
-            }, 5000);
+            }
+            activeUsers.delete(socket.id);
+            sendTicketsToOperators();
         }
     });
 });
 
 server.listen(PORT, () => {
-    console.log('========================================');
-    console.log('ЛР9 - Чат-поддержка: http://localhost:' + PORT + '/chat');
-    console.log('Код оператора: 1234');
-    console.log('========================================');
+    console.log('Server: http://localhost:' + PORT);
+    console.log('Chat: http://localhost:' + PORT + '/chat');
+    console.log('Operator code: 1234');
 });
