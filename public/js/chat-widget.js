@@ -126,6 +126,7 @@ function setupWidgetSocketListeners() {
             updateWidgetMessageArea('Выберите запрос из списка');
             widgetSocket.emit('tickets_list', []);
         }
+
     });
 
     widgetSocket.on('ticket_created', (data) => {
@@ -189,6 +190,19 @@ function setupWidgetSocketListeners() {
 
     widgetSocket.on('support_ended', () => {
         setTimeout(() => resetWidgetToLogin(), 2000);
+    });
+
+    widgetSocket.on('disconnect', () => {
+        if (widgetRole === 'user' && widgetTicket) {
+            updateWidgetStatus('waiting', 'Восстановление соединения...');
+            enableWidgetMessaging(false);
+        }
+    });
+
+    widgetSocket.on('reconnect', () => {
+        if (widgetRole === 'user' && widgetTicket) {
+            widgetSocket.emit('register', { name: widgetUser.name, role: 'user' });
+        }
     });
 }
 

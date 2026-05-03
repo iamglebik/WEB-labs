@@ -308,45 +308,44 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('disconnect', () => {
-        console.log('Клиент отключен:', socket.id);
-        const user = activeUsers.get(socket.id);
+socket.on('disconnect', () => {
+    console.log('Клиент отключен:', socket.id);
+    const user = activeUsers.get(socket.id);
 
-        if (user) {
-            if (user.currentTicket) {
-                const ticket = tickets.get(user.currentTicket);
-                if (ticket) {
-                    if (user.role === 'operator' && ticket.status === 'active') {
-                        const disconnectMessage = {
-                            id: uuidv4(),
-                            text: 'Оператор ' + user.name + ' отключился',
-                            sender: 'Система',
-                            senderId: 'system',
-                            senderRole: 'system',
-                            timestamp: new Date()
-                        };
-                        ticket.messages.push(disconnectMessage);
-                        socket.to('ticket_' + user.currentTicket).emit('new_message', disconnectMessage);
-                        
-                        ticket.status = 'waiting';
-                        ticket.operatorId = null;
-                        socket.to('ticket_' + user.currentTicket).emit('ticket_status', {
-                            status: 'waiting'
-                        });
-                        
-                        updateOperatorsTicketList();
-                    }
+    if (user) {
+        if (user.currentTicket) {
+            const ticket = tickets.get(user.currentTicket);
+            if (ticket) {
+                if (user.role === 'operator' && ticket.status === 'active') {
+                    const disconnectMessage = {
+                        id: uuidv4(),
+                        text: 'Оператор ' + user.name + ' отключился',
+                        sender: 'Система',
+                        senderId: 'system',
+                        senderRole: 'system',
+                        timestamp: new Date()
+                    };
+                    ticket.messages.push(disconnectMessage);
+                    socket.to('ticket_' + user.currentTicket).emit('new_message', disconnectMessage);
                     
-                    if (user.role === 'user' && ticket.status === 'waiting') {
-                        tickets.delete(user.currentTicket);
-                        updateOperatorsTicketList();
-                    }
+                    ticket.status = 'waiting';
+                    ticket.operatorId = null;
+                    socket.to('ticket_' + user.currentTicket).emit('ticket_status', {
+                        status: 'waiting'
+                    });
+                    
+                    updateOperatorsTicketList();
+                }
+                
+                if (user.role === 'user' && ticket.status === 'waiting') {
+                    socket.to('ticket_' + user.currentTicket).emit('user_disconnected');
                 }
             }
-
-            activeUsers.delete(socket.id);
         }
-    });
+
+        activeUsers.delete(socket.id);
+    }
+});
 });
 
 server.listen(PORT, () => {
