@@ -41,21 +41,24 @@ app.get('/chat', (req, res) => {
     res.render('chat', { title: 'Чат-поддержка' });
 });
 
-app.get('/api/tickets', (req, res) => {
-    const activeTickets = Array.from(tickets.values())
-        .filter(t => t.status === 'waiting' || t.status === 'active')
-        .map(t => ({
-            id: t.id,
-            userName: t.userName,
-            status: t.status,
-            createdAt: t.createdAt,
-            operatorId: t.operatorId
-        }));
-    res.json(activeTickets);
-});
-
-let activeUsers = new Map();
+const chatStore = require('./routes/chat-store');
+let store = chatStore.readStore();
 let tickets = new Map();
+let activeUsers = new Map();
+
+if (store.tickets) {
+    Object.keys(store.tickets).forEach(key => {
+        tickets.set(key, store.tickets[key]);
+    });
+}
+
+function saveStore() {
+    const ticketsObj = {};
+    tickets.forEach((value, key) => {
+        ticketsObj[key] = value;
+    });
+    chatStore.writeStore({ tickets: ticketsObj });
+}
 
 function generateUserId() {
     return 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
@@ -72,35 +75,41 @@ function findSocketByUserId(userId) {
 }
 
 function updateOperatorsTicketList() {
-    const waitingTickets = Array.from(tickets.values())
-        .filter(t => t.status === 'waiting')
-        .map(t => ({
-            id: t.id,
-            userName: t.userName,
-            createdAt: t.createdAt
-        }));
+    const waitingTickets = [];
+    tickets.forEach(t => {
+        if (t.status === 'waiting') {
+            waitingTickets.push({
+                id: t.id,
+                userName: t.userName,
+                createdAt: t.createdAt
+            });
+        }
+    });
 
-    for (const [socketId, user] of activeUsers.entries()) {
+    activeUsers.forEach(user => {
         if (user.role === 'operator') {
-            const socket = io.sockets.sockets.get(socketId);
+            const socket = io.sockets.sockets.get(user.socketId);
             if (socket) {
                 socket.emit('tickets_list', waitingTickets);
             }
         }
-    }
+    });
 }
 
 io.on('connection', (socket) => {
     console.log('Клиент чата подключен:', socket.id);
 
     socket.on('request_tickets', () => {
-        const waitingTickets = Array.from(tickets.values())
-            .filter(t => t.status === 'waiting')
-            .map(t => ({
-                id: t.id,
-                userName: t.userName,
-                createdAt: t.createdAt
-            }));
+        const waitingTickets = [];
+        tickets.forEach(t => {
+            if (t.status === 'waiting') {
+                waitingTickets.push({
+                    id: t.id,
+                    userName: t.userName,
+                    createdAt: t.createdAt
+                });
+            }
+        });
         socket.emit('tickets_list', waitingTickets);
     });
 
@@ -124,7 +133,7 @@ io.on('connection', (socket) => {
                 userName: name,
                 status: 'waiting',
                 messages: [],
-                createdAt: new Date(),
+                createdAt: new Date().toISOString(),
                 operatorId: null
             };
             tickets.set(newTicket.id, newTicket);
@@ -144,11 +153,12 @@ io.on('connection', (socket) => {
                 sender: 'Система',
                 senderId: 'system',
                 senderRole: 'system',
-                timestamp: new Date()
+                timestamp: new Date().toISOString()
             };
             newTicket.messages.push(systemMessage);
             socket.emit('new_message', systemMessage);
 
+            saveStore();
             updateOperatorsTicketList();
         }
         else if (role === 'operator') {
@@ -157,13 +167,16 @@ io.on('connection', (socket) => {
                 role: 'operator'
             });
 
-            const waitingTickets = Array.from(tickets.values())
-                .filter(t => t.status === 'waiting')
-                .map(t => ({
-                    id: t.id,
-                    userName: t.userName,
-                    createdAt: t.createdAt
-                }));
+            const waitingTickets = [];
+            tickets.forEach(t => {
+                if (t.status === 'waiting') {
+                    waitingTickets.push({
+                        id: t.id,
+                        userName: t.userName,
+                        createdAt: t.createdAt
+                    });
+                }
+            });
 
             socket.emit('tickets_list', waitingTickets);
         }
@@ -199,7 +212,7 @@ io.on('connection', (socket) => {
             sender: 'Система',
             senderId: 'system',
             senderRole: 'system',
-            timestamp: new Date()
+            timestamp: new Date().toISOString()
         };
         ticket.messages.push(systemMessage);
         io.to('ticket_' + ticketId).emit('new_message', systemMessage);
@@ -209,6 +222,7 @@ io.on('connection', (socket) => {
             operatorName: operator.name
         });
 
+        saveStore();
         updateOperatorsTicketList();
     });
 
@@ -230,11 +244,12 @@ io.on('connection', (socket) => {
             sender: user.name,
             senderId: user.id,
             senderRole: user.role,
-            timestamp: new Date()
+            timestamp: new Date().toISOString()
         };
 
         ticket.messages.push(messageData);
         io.to('ticket_' + ticketId).emit('new_message', messageData);
+        saveStore();
     });
 
     socket.on('typing', (data) => {
@@ -261,7 +276,7 @@ io.on('connection', (socket) => {
                 sender: 'Система',
                 senderId: 'system',
                 senderRole: 'system',
-                timestamp: new Date()
+                timestamp: new Date().toISOString()
             };
             ticket.messages.push(systemMessage);
             io.to('ticket_' + ticketId).emit('new_message', systemMessage);
@@ -285,6 +300,7 @@ io.on('connection', (socket) => {
 
             setTimeout(() => {
                 tickets.delete(ticketId);
+                saveStore();
             }, 60000);
         }
 
@@ -308,50 +324,35 @@ io.on('connection', (socket) => {
         }
     });
 
-socket.on('disconnect', () => {
-    console.log('Клиент отключен:', socket.id);
-    const user = activeUsers.get(socket.id);
+    socket.on('disconnect', () => {
+        console.log('Клиент отключен:', socket.id);
+        const user = activeUsers.get(socket.id);
 
-    if (user) {
-        if (user.currentTicket) {
-            const ticket = tickets.get(user.currentTicket);
-            if (ticket) {
-                if (user.role === 'operator' && ticket.status === 'active') {
-                    const disconnectMessage = {
-                        id: uuidv4(),
-                        text: 'Оператор ' + user.name + ' отключился',
-                        sender: 'Система',
-                        senderId: 'system',
-                        senderRole: 'system',
-                        timestamp: new Date()
-                    };
-                    ticket.messages.push(disconnectMessage);
-                    socket.to('ticket_' + user.currentTicket).emit('new_message', disconnectMessage);
-                    
-                    ticket.status = 'waiting';
-                    ticket.operatorId = null;
-                    socket.to('ticket_' + user.currentTicket).emit('ticket_status', {
-                        status: 'waiting'
-                    });
-                    
-                    updateOperatorsTicketList();
+        if (user) {
+            activeUsers.delete(socket.id);
+            
+            setTimeout(() => {
+                const stillConnected = findSocketByUserId(user.id);
+                if (!stillConnected) {
+                    if (user.currentTicket) {
+                        const ticket = tickets.get(user.currentTicket);
+                        if (ticket) {
+                            if (user.role === 'operator' && ticket.status === 'active') {
+                                ticket.status = 'waiting';
+                                ticket.operatorId = null;
+                                updateOperatorsTicketList();
+                                saveStore();
+                            }
+                        }
+                    }
                 }
-                
-                if (user.role === 'user' && ticket.status === 'waiting') {
-                    socket.to('ticket_' + user.currentTicket).emit('user_disconnected');
-                }
-            }
+            }, 5000);
         }
-
-        activeUsers.delete(socket.id);
-    }
-});
+    });
 });
 
 server.listen(PORT, () => {
     console.log('========================================');
-    console.log('Сервер запущен на http://localhost:' + PORT);
-    console.log('ЛР8 - Отдел кадров: http://localhost:' + PORT + '/');
     console.log('ЛР9 - Чат-поддержка: http://localhost:' + PORT + '/chat');
     console.log('Код оператора: 1234');
     console.log('========================================');
