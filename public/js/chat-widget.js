@@ -124,9 +124,8 @@ function setupWidgetSocketListeners() {
 
             updateWidgetStatus('waiting', 'Выберите запрос');
             updateWidgetMessageArea('Выберите запрос из списка');
-            widgetSocket.emit('tickets_list', []);
+            widgetSocket.emit('request_tickets');
         }
-
     });
 
     widgetSocket.on('ticket_created', (data) => {
@@ -181,6 +180,10 @@ function setupWidgetSocketListeners() {
             document.getElementById('widget-operator-sidebar').classList.remove('hidden');
             widgetTicket = null;
         }
+        if (widgetRole === 'user') {
+            widgetTicket = null;
+            updateWidgetStatus('closed', 'Запрос закрыт');
+        }
     });
 
     widgetSocket.on('operator_joined', (data) => {
@@ -196,12 +199,30 @@ function setupWidgetSocketListeners() {
         if (widgetRole === 'user' && widgetTicket) {
             updateWidgetStatus('waiting', 'Восстановление соединения...');
             enableWidgetMessaging(false);
+        } else if (widgetRole === 'operator') {
+            updateWidgetStatus('waiting', 'Восстановление соединения...');
         }
     });
 
     widgetSocket.on('reconnect', () => {
         if (widgetRole === 'user' && widgetTicket) {
-            widgetSocket.emit('register', { name: widgetUser.name, role: 'user' });
+            widgetSocket.emit('get_history', { ticketId: widgetTicket });
+        } else if (widgetRole === 'operator' && widgetUser) {
+            widgetSocket.emit('request_tickets');
+            if (widgetTicket) {
+                widgetSocket.emit('get_history', { ticketId: widgetTicket });
+            }
+        }
+    });
+
+    widgetSocket.on('connect', () => {
+        if (widgetRole === 'user' && widgetUser && widgetTicket) {
+            widgetSocket.emit('get_history', { ticketId: widgetTicket });
+        } else if (widgetRole === 'operator' && widgetUser) {
+            widgetSocket.emit('request_tickets');
+            if (widgetTicket) {
+                widgetSocket.emit('get_history', { ticketId: widgetTicket });
+            }
         }
     });
 }
