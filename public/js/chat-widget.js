@@ -3,6 +3,8 @@ let widgetUser = null;
 let widgetTicket = null;
 let widgetRole = null;
 let widgetTypingTimeout = null;
+let savedTicketId = null;
+let savedUserName = null;
 
 function toggleChatWidget() {
     const widget = document.getElementById('chat-widget');
@@ -34,12 +36,13 @@ function backWidgetToLogin() {
 
 function connectWidgetToServer() {
     if (widgetSocket) {
+        widgetSocket.removeAllListeners();
         widgetSocket.disconnect();
     }
     widgetSocket = io({
         transports: ['websocket', 'polling'],
         reconnection: true,
-        reconnectionAttempts: 10,
+        reconnectionAttempts: Infinity,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,
         timeout: 20000
@@ -55,14 +58,29 @@ function joinWidgetAsUser() {
     }
 
     widgetRole = 'user';
+    savedUserName = name;
     connectWidgetToServer();
 
+    widgetSocket.on('connect', function() {
+        if (savedTicketId) {
+            widgetSocket.emit('reconnect_user', { 
+                ticketId: savedTicketId, 
+                name: savedUserName 
+            });
+        } else {
+            widgetSocket.emit('register', { name: savedUserName, role: 'user' });
+        }
+    });
+
     if (widgetSocket.connected) {
-        widgetSocket.emit('register', { name, role: 'user' });
-    } else {
-        widgetSocket.on('connect', () => {
-            widgetSocket.emit('register', { name, role: 'user' });
-        });
+        if (savedTicketId) {
+            widgetSocket.emit('reconnect_user', { 
+                ticketId: savedTicketId, 
+                name: savedUserName 
+            });
+        } else {
+            widgetSocket.emit('register', { name: savedUserName, role: 'user' });
+        }
     }
 }
 
@@ -80,26 +98,28 @@ function joinWidgetAsOperator() {
     }
 
     widgetRole = 'operator';
+    savedUserName = name;
     connectWidgetToServer();
 
+    widgetSocket.on('connect', function() {
+        widgetSocket.emit('register', { name: savedUserName, role: 'operator' });
+    });
+
     if (widgetSocket.connected) {
-        widgetSocket.emit('register', { name, role: 'operator' });
-    } else {
-        widgetSocket.on('connect', () => {
-            widgetSocket.emit('register', { name, role: 'operator' });
-        });
+        widgetSocket.emit('register', { name: savedUserName, role: 'operator' });
     }
 }
 
 function setupWidgetSocketListeners() {
-    widgetSocket.on('registered', (data) => {
+    widgetSocket.on('registered', function(data) {
         if (widgetRole === 'user') {
             widgetUser = {
                 id: data.userId,
-                name: document.getElementById('widget-user-name').value.trim(),
+                name: savedUserName,
                 role: 'user'
             };
             widgetTicket = data.ticketId;
+            savedTicketId = data.ticketId;
 
             document.getElementById('widget-user-form').classList.add('hidden');
             showWidgetChatInterface();
@@ -110,7 +130,7 @@ function setupWidgetSocketListeners() {
         } else if (widgetRole === 'operator') {
             widgetUser = {
                 id: data.userId,
-                name: document.getElementById('widget-operator-name').value.trim(),
+                name: savedUserName,
                 role: 'operator'
             };
 
@@ -128,18 +148,30 @@ function setupWidgetSocketListeners() {
         }
     });
 
-    widgetSocket.on('ticket_created', (data) => {
+    widgetSocket.on('reconnected_to_ticket', function(data) {
+        if (widgetRole === 'user') {
+            widgetUser = { id: data.userId, name: savedUserName, role: 'user' };
+            widgetTicket = data.ticketId;
+            savedTicketId = data.ticketId;
+            updateWidgetStatus(data.status === 'active' ? 'active' : 'waiting', 
+                data.status === 'active' ? 'Оператор: ' + (data.operatorName || '') : 'Ожидание оператора');
+            enableWidgetMessaging(data.status === 'active');
+            widgetSocket.emit('get_history', { ticketId: widgetTicket });
+        }
+    });
+
+    widgetSocket.on('ticket_created', function(data) {
         if (widgetRole === 'operator') {
             addWidgetNotification('Новый запрос от ' + data.userName);
             widgetSocket.emit('request_tickets');
         }
     });
 
-    widgetSocket.on('tickets_list', (tickets) => {
+    widgetSocket.on('tickets_list', function(tickets) {
         updateWidgetTicketsList(tickets);
     });
 
-    widgetSocket.on('ticket_status', (data) => {
+    widgetSocket.on('ticket_status', function(data) {
         if (data.status === 'active') {
             updateWidgetStatus('active', 'Оператор: ' + data.operatorName);
             enableWidgetMessaging(true);
@@ -149,12 +181,12 @@ function setupWidgetSocketListeners() {
         }
     });
 
-    widgetSocket.on('new_message', (message) => {
+    widgetSocket.on('new_message', function(message) {
         addWidgetMessageToChat(message);
         scrollWidgetToBottom();
     });
 
-    widgetSocket.on('message_history', (data) => {
+    widgetSocket.on('message_history', function(data) {
         displayWidgetMessageHistory(data.messages);
         if (data.status === 'active') {
             updateWidgetStatus('active', 'Активный чат');
@@ -168,61 +200,39 @@ function setupWidgetSocketListeners() {
         }
     });
 
-    widgetSocket.on('user_typing', (data) => {
+    widgetSocket.on('user_typing', function(data) {
         showWidgetTypingIndicator(data.userName, data.isTyping);
     });
 
-    widgetSocket.on('ticket_closed', () => {
+    widgetSocket.on('ticket_closed', function() {
         updateWidgetStatus('closed', 'Запрос закрыт');
         enableWidgetMessaging(false);
+        savedTicketId = null;
         if (widgetRole === 'operator') {
             document.getElementById('widget-close-ticket-btn').classList.add('hidden');
-            document.getElementById('widget-operator-sidebar').classList.remove('hidden');
             widgetTicket = null;
         }
         if (widgetRole === 'user') {
             widgetTicket = null;
-            updateWidgetStatus('closed', 'Запрос закрыт');
         }
     });
 
-    widgetSocket.on('operator_joined', (data) => {
+    widgetSocket.on('operator_joined', function(data) {
         updateWidgetStatus('active', 'Оператор: ' + data.operatorName);
         enableWidgetMessaging(true);
     });
 
-    widgetSocket.on('support_ended', () => {
-        setTimeout(() => resetWidgetToLogin(), 2000);
+    widgetSocket.on('support_ended', function() {
+        savedTicketId = null;
+        setTimeout(function() { resetWidgetToLogin(); }, 2000);
     });
 
-    widgetSocket.on('disconnect', () => {
-        if (widgetRole === 'user' && widgetTicket) {
+    widgetSocket.on('disconnect', function() {
+        if (widgetRole === 'user' && savedTicketId) {
             updateWidgetStatus('waiting', 'Восстановление соединения...');
             enableWidgetMessaging(false);
         } else if (widgetRole === 'operator') {
             updateWidgetStatus('waiting', 'Восстановление соединения...');
-        }
-    });
-
-    widgetSocket.on('reconnect', () => {
-        if (widgetRole === 'user' && widgetTicket) {
-            widgetSocket.emit('get_history', { ticketId: widgetTicket });
-        } else if (widgetRole === 'operator' && widgetUser) {
-            widgetSocket.emit('request_tickets');
-            if (widgetTicket) {
-                widgetSocket.emit('get_history', { ticketId: widgetTicket });
-            }
-        }
-    });
-
-    widgetSocket.on('connect', () => {
-        if (widgetRole === 'user' && widgetUser && widgetTicket) {
-            widgetSocket.emit('get_history', { ticketId: widgetTicket });
-        } else if (widgetRole === 'operator' && widgetUser) {
-            widgetSocket.emit('request_tickets');
-            if (widgetTicket) {
-                widgetSocket.emit('get_history', { ticketId: widgetTicket });
-            }
         }
     });
 }
@@ -245,19 +255,19 @@ function updateWidgetTicketsList(tickets) {
         return;
     }
 
-    container.innerHTML = tickets.map(ticket => 
-        '<div class="ticket-item" onclick="selectWidgetTicket(\'' + ticket.id + '\', event)">' +
+    container.innerHTML = tickets.map(function(ticket) {
+        return '<div class="ticket-item" onclick="selectWidgetTicket(\'' + ticket.id + '\', event)">' +
             '<div class="ticket-name">' + escapeHtmlWidget(ticket.userName) + '</div>' +
             '<div class="ticket-time">' + formatDateWidget(ticket.createdAt) + '</div>' +
-        '</div>'
-    ).join('');
+        '</div>';
+    }).join('');
 }
 
 function selectWidgetTicket(ticketId, event) {
     widgetTicket = ticketId;
     widgetSocket.emit('take_ticket', { ticketId: ticketId });
 
-    document.querySelectorAll('#widget-tickets-list .ticket-item').forEach(el => {
+    document.querySelectorAll('#widget-tickets-list .ticket-item').forEach(function(el) {
         el.classList.remove('active');
     });
     if (event && event.target) {
@@ -335,7 +345,7 @@ function displayWidgetMessageHistory(messages) {
         return;
     }
 
-    messages.forEach(message => {
+    messages.forEach(function(message) {
         const isMyMessage = message.senderId === widgetUser?.id;
         const messageClass = isMyMessage ? 'my-message' : (message.senderRole === 'system' ? 'system-message' : 'other-message');
 
@@ -380,7 +390,7 @@ function showWidgetTypingIndicator(userName, isTyping) {
 function onWidgetTyping() {
     if (!widgetTicket || !widgetUser) return;
     
-    var input = document.getElementById('widget-message-input');
+    const input = document.getElementById('widget-message-input');
     if (input && input.value.trim().length > 0) {
         widgetSocket.emit('typing', { ticketId: widgetTicket, isTyping: true, userName: widgetUser.name });
         clearWidgetTypingTimeout();
@@ -407,9 +417,10 @@ function closeWidgetTicket() {
         enableWidgetMessaging(false);
         updateWidgetStatus('closed', 'Запрос закрыт');
         document.getElementById('widget-close-ticket-btn').classList.add('hidden');
+        savedTicketId = null;
 
         if (widgetRole === 'user') {
-            setTimeout(() => resetWidgetToLogin(), 2000);
+            setTimeout(function() { resetWidgetToLogin(); }, 2000);
         } else {
             widgetTicket = null;
             updateWidgetStatus('waiting', 'Выберите запрос');
@@ -420,9 +431,6 @@ function closeWidgetTicket() {
 
 function logoutWidget() {
     if (confirm('Выйти из чата?')) {
-        if (widgetRole === 'operator') {
-            widgetSocket.disconnect();
-        }
         if (widgetSocket) {
             widgetSocket.disconnect();
         }
@@ -434,22 +442,28 @@ function resetWidgetToLogin() {
     widgetUser = null;
     widgetTicket = null;
     widgetRole = null;
+    savedTicketId = null;
+    savedUserName = null;
+    
+    if (widgetSocket) {
+        widgetSocket.removeAllListeners();
+        widgetSocket.disconnect();
+    }
 
     document.getElementById('chat-widget').classList.remove('operator-mode');
-    
     document.getElementById('widget-chat-interface').classList.add('hidden');
     document.getElementById('widget-operator-sidebar').classList.add('hidden');
     document.getElementById('widget-login-screen').classList.remove('hidden');
     
-    var userNameInput = document.getElementById('widget-user-name');
-    var operatorNameInput = document.getElementById('widget-operator-name');
-    var operatorCodeInput = document.getElementById('widget-operator-code');
+    const userNameInput = document.getElementById('widget-user-name');
+    const operatorNameInput = document.getElementById('widget-operator-name');
+    const operatorCodeInput = document.getElementById('widget-operator-code');
     
     if (userNameInput) userNameInput.value = '';
     if (operatorNameInput) operatorNameInput.value = '';
     if (operatorCodeInput) operatorCodeInput.value = '';
 
-    var messagesArea = document.getElementById('widget-messages-area');
+    const messagesArea = document.getElementById('widget-messages-area');
     if (messagesArea) {
         messagesArea.innerHTML = '<div class="welcome-message"><p>👋 Добро пожаловать в чат поддержки!</p><p class="small">Выберите роль для начала общения</p></div>';
     }
@@ -462,7 +476,7 @@ function addWidgetNotification(message) {
     notification.style.cssText = 'background: #667eea; color: white; padding: 8px; border-radius: 8px; margin-bottom: 10px;';
     notification.innerText = message;
     container.prepend(notification);
-    setTimeout(() => notification.remove(), 3000);
+    setTimeout(function() { notification.remove(); }, 3000);
 }
 
 function scrollWidgetToBottom() {
@@ -488,19 +502,19 @@ function escapeHtmlWidget(text) {
     return div.innerHTML;
 }
 
-window.addEventListener('beforeunload', () => {
+window.addEventListener('beforeunload', function() {
     if (widgetSocket && widgetSocket.connected) {
         widgetSocket.disconnect();
     }
 });
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function() {
     const messageInput = document.getElementById('widget-message-input');
     const sendBtn = document.getElementById('widget-send-btn');
     const logoutBtn = document.getElementById('widget-logout-btn');
 
     if (messageInput) {
-        messageInput.addEventListener('keypress', (e) => {
+        messageInput.addEventListener('keypress', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendWidgetMessage();
