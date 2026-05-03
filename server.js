@@ -114,7 +114,7 @@ io.on('connection', (socket) => {
             id: uuidv4(),
             text: data.message,
             sender: currentName,
-            senderId: socket.id,
+            senderId: currentRole,
             senderRole: currentRole,
             timestamp: new Date().toISOString()
         };

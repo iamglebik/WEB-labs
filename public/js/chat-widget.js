@@ -225,12 +225,7 @@ function addWidgetMessageToChat(message) {
     var messagesArea = document.getElementById('widget-messages-area');
     if (!messagesArea) return;
     
-    var isMyMessage = false;
-    if (widgetRole === 'operator' && message.senderRole === 'operator') {
-        isMyMessage = true;
-    } else if (widgetRole === 'user' && message.senderRole === 'user') {
-        isMyMessage = true;
-    }
+    var isMyMessage = (message.senderRole === widgetRole);
     
     var messageClass = isMyMessage ? 'my-message' : (message.senderRole === 'system' ? 'system-message' : 'other-message');
     
@@ -247,6 +242,40 @@ function addWidgetMessageToChat(message) {
         '<div class="message-info">' + formatTimeWidget(message.timestamp) + '</div>';
     
     messagesArea.appendChild(messageDiv);
+    scrollWidgetToBottom();
+}
+
+function displayWidgetMessageHistory(messages) {
+    var messagesArea = document.getElementById('widget-messages-area');
+    if (!messagesArea) return;
+    messagesArea.innerHTML = '';
+    
+    if (!messages || messages.length === 0) {
+        messagesArea.innerHTML = '<div class="welcome-message"><p>💬 Начните общение!</p></div>';
+        return;
+    }
+    
+    for (var i = 0; i < messages.length; i++) {
+        var message = messages[i];
+        
+        var isMyMessage = (message.senderRole === widgetRole);
+        
+        var messageClass = isMyMessage ? 'my-message' : (message.senderRole === 'system' ? 'system-message' : 'other-message');
+        
+        var messageDiv = document.createElement('div');
+        messageDiv.className = 'message ' + messageClass;
+        
+        var senderHtml = '';
+        if (!isMyMessage && message.senderRole !== 'system') {
+            senderHtml = '<div class="message-sender">' + escapeHtmlWidget(message.sender) + '</div>';
+        }
+        
+        messageDiv.innerHTML = senderHtml +
+            '<div class="message-bubble">' + escapeHtmlWidget(message.text) + '</div>' +
+            '<div class="message-info">' + formatTimeWidget(message.timestamp) + '</div>';
+        
+        messagesArea.appendChild(messageDiv);
+    }
     scrollWidgetToBottom();
 }
 
