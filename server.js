@@ -61,7 +61,6 @@ io.on('connection', (socket) => {
                 senderRole: 'system',
                 timestamp: new Date().toISOString()
             };
-            chatStore.addMessage(ticket.id, systemMsg);
             socket.emit('new_message', systemMsg);
 
             const waiting = chatStore.getWaitingTickets();
@@ -92,7 +91,6 @@ io.on('connection', (socket) => {
                 senderRole: 'system',
                 timestamp: new Date().toISOString()
             };
-            chatStore.addMessage(data.ticketId, systemMsg);
             io.to('ticket_' + data.ticketId).emit('new_message', systemMsg);
             io.to('ticket_' + data.ticketId).emit('ticket_status', {
                 status: 'active',
@@ -118,15 +116,7 @@ io.on('connection', (socket) => {
             senderRole: currentRole,
             timestamp: new Date().toISOString()
         };
-        chatStore.addMessage(data.ticketId, msg);
         io.to('ticket_' + data.ticketId).emit('new_message', msg);
-    });
-
-    socket.on('typing', (data) => {
-        socket.to('ticket_' + data.ticketId).emit('user_typing', {
-            userName: data.userName,
-            isTyping: data.isTyping
-        });
     });
 
     socket.on('close_ticket', (data) => {
@@ -140,21 +130,10 @@ io.on('connection', (socket) => {
                 senderRole: 'system',
                 timestamp: new Date().toISOString()
             };
-            chatStore.addMessage(data.ticketId, systemMsg);
             io.to('ticket_' + data.ticketId).emit('new_message', systemMsg);
             io.to('ticket_' + data.ticketId).emit('ticket_closed', {});
         }
         currentTicketId = null;
-    });
-
-    socket.on('get_history', (data) => {
-        const ticket = chatStore.getTicket(data.ticketId);
-        if (ticket) {
-            socket.emit('message_history', {
-                messages: ticket.messages,
-                status: ticket.status
-            });
-        }
     });
 
     socket.on('disconnect', () => {
@@ -170,7 +149,6 @@ io.on('connection', (socket) => {
                     senderRole: 'system',
                     timestamp: new Date().toISOString()
                 };
-                chatStore.addMessage(currentTicketId, systemMsg);
                 socket.to('ticket_' + currentTicketId).emit('new_message', systemMsg);
                 socket.to('ticket_' + currentTicketId).emit('ticket_status', {
                     status: 'waiting'
